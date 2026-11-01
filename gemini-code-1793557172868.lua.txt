@@ -1,0 +1,916 @@
+--[[
+    void — Cross-Platform (PC & Mobile) Multi-Feature Edition
+    - Official Community Interface & Fully Integrated Tools
+    - Full Mobile Touch Controls & Keyboard Support
+]]
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local Stats = game:GetService("Stats")
+local TeleportService = game:GetService("TeleportService")
+local CoreGuiService = game:GetService("CoreGui")
+
+local LP = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+---------------------------------------------------------
+-- Configuration & Settings Management
+---------------------------------------------------------
+local CONFIG = {
+    ToggleKey = Enum.KeyCode.K,
+    DiscordLink = "https://discord.gg/ATYfbUFrpj",
+    LogoID = "rbxassetid://6023426915"
+}
+
+local SaveFileName = "void_Settings.json"
+local Settings = {
+    DhabAll = false,
+    DhabRareOnly = false,
+    SmartAlerts = true,
+    Players = false,
+    Vehicles = false,
+    ShopEzba = false,
+    Edge = false,
+    TeleportShop = false,
+    EspDistance = 500,
+    Aimbot = false,
+    AimbotDistance = 50,
+    RequireWeapon = true,
+    UseFOVCircle = true,
+    FOVRadius = 120,
+    HoldRightClick = false,
+    RareHudActive = false,
+    HudPosX = 0.75,
+    HudPosY = 0.15,
+    AntiAfkActive = true,      
+    AutoRejoinActive = true,
+    VehicleFlyActive = false,
+    VehicleFlySpeed = 70
+}
+
+if writefile and readfile and isfile and isfile(SaveFileName) then
+    local success, decoded = pcall(function()
+        return HttpService:JSONDecode(readfile(SaveFileName))
+    end)
+    if success and type(decoded) == "table" then
+        for k, v in pairs(decoded) do
+            if Settings[k] ~= nil and k ~= "TeleportShop" and k ~= "VehicleFlyActive" then 
+                Settings[k] = v 
+            end
+        end
+    end
+end
+
+local function SaveSettings()
+    if writefile then
+        pcall(function()
+            writefile(SaveFileName, HttpService:JSONEncode(Settings))
+        end)
+    end
+end
+
+---------------------------------------------------------
+-- UI Setup & Initialization
+---------------------------------------------------------
+local function getParent()
+    if type(gethui) == "function" then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok and cg then return cg end
+    return LP:WaitForChild("PlayerGui")
+end
+
+local uiParent = getParent()
+
+for _, c in ipairs(uiParent:GetChildren()) do
+    if c.Name == "void" then c:Destroy() end
+end
+
+local mainGui = Instance.new("ScreenGui")
+mainGui.Name = "void"
+mainGui.ResetOnSpawn = false
+mainGui.Parent = uiParent
+
+---------------------------------------------------------
+-- Themes & Color Constants
+---------------------------------------------------------
+local DarkTheme = {
+    Background = Color3.fromRGB(15, 12, 28),
+    Panel = Color3.fromRGB(24, 18, 43),
+    ButtonOff = Color3.fromRGB(35, 28, 58),
+    ButtonOn = Color3.fromRGB(124, 58, 237),
+    Accent = Color3.fromRGB(124, 58, 237),
+    Glow = Color3.fromRGB(168, 85, 247)
+}
+
+local Colors = {
+    White = Color3.fromRGB(255, 255, 255),
+    Muted = Color3.fromRGB(168, 85, 247),
+    PlayerColor = Color3.fromRGB(255, 60, 60),
+    VehicleColor = Color3.fromRGB(255, 150, 0)
+}
+
+local RarityNames = {
+    T1 = "عادي", T2 = "مميز", T3 = "نادر", T4 = "فاخر", T5 = "أسطوري", T6 = "خرافي",
+    Common = "عادي", Uncommon = "مميز", Rare = "نادر", Epic = "فاخر", Legendary = "أسطوري", Mythic = "خرافي"
+}
+
+local StateNames = {
+    idle = "واقف 🧍",
+    walk = "يمشي 🚶",
+    flee = "يهرب 🏃",
+    alert = "منتبه ⚠️",
+    display = "يستعرض ✨"
+}
+
+local RarityColors = {
+    T1 = Color3.fromRGB(150, 160, 175),
+    T2 = Color3.fromRGB(70, 160, 95),
+    T3 = Color3.fromRGB(65, 130, 195),
+    T4 = Color3.fromRGB(130, 90, 175),
+    T5 = Color3.fromRGB(255, 180, 50),
+    T6 = Color3.fromRGB(255, 50, 70)
+}
+
+---------------------------------------------------------
+-- Global Elements (FOV Circle, Sounds, Alerts & HUD)
+---------------------------------------------------------
+local CachedDhabs = {}
+local NotifiedRareDhabs = {}
+local LastKnownStates = {}
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Thickness = 1.5
+FOVCircle.Color = DarkTheme.Glow
+FOVCircle.Filled = false
+FOVCircle.Transparency = 0.7
+FOVCircle.Visible = false
+
+local NotifySound = Instance.new("Sound", mainGui)
+NotifySound.SoundId = "rbxassetid://4590657391"
+NotifySound.Volume = 0.4
+NotifySound.RollOffMaxDistance = 0
+
+local AlertBox = Instance.new("TextLabel", mainGui)
+AlertBox.Size = UDim2.new(0, 360, 0, 45)
+AlertBox.Position = UDim2.new(0.5, -180, 0.05, 0)
+AlertBox.BackgroundColor3 = Color3.fromRGB(220, 38, 38)
+AlertBox.TextColor3 = Colors.White
+AlertBox.TextSize = 12
+AlertBox.Font = Enum.Font.GothamBold
+AlertBox.Text = "🚨 تنبيه: تم رصد ضب أسطوري/خرافي قريب منك!"
+AlertBox.Visible = false
+Instance.new("UICorner", AlertBox).CornerRadius = UDim.new(0, 10)
+
+local RareHud = Instance.new("Frame", mainGui)
+RareHud.Name = "RareHud"
+RareHud.Size = UDim2.new(0, 240, 0, 95)
+RareHud.Position = UDim2.new(Settings.HudPosX, 0, Settings.HudPosY, 0)
+RareHud.BackgroundColor3 = DarkTheme.Panel
+RareHud.BorderSizePixel = 0
+RareHud.Visible = Settings.RareHudActive
+RareHud.Active = true
+Instance.new("UICorner", RareHud).CornerRadius = UDim.new(0, 10)
+
+local RareHudStroke = Instance.new("UIStroke", RareHud)
+RareHudStroke.Color = DarkTheme.Accent
+RareHudStroke.Thickness = 1.5
+
+local RareHudTitle = Instance.new("TextLabel", RareHud)
+RareHudTitle.Size = UDim2.new(1, 0, 0, 26)
+RareHudTitle.BackgroundTransparency = 1
+RareHudTitle.Text = "👑 رادار الضبان النادرة (T5 & T6)"
+RareHudTitle.TextColor3 = DarkTheme.Glow
+RareHudTitle.TextSize = 10
+RareHudTitle.Font = Enum.Font.GothamBold
+
+local RareHudContent = Instance.new("TextLabel", RareHud)
+RareHudContent.Size = UDim2.new(1, -16, 1, -32)
+RareHudContent.Position = UDim2.new(0, 8, 0, 28)
+RareHudContent.BackgroundTransparency = 1
+RareHudContent.Text = "جاري البحث عن ضب أسطوري أو خرافي قريب..."
+RareHudContent.TextColor3 = Colors.White
+RareHudContent.TextSize = 10
+RareHudContent.Font = Enum.Font.GothamMedium
+RareHudContent.TextWrapped = true
+RareHudContent.TextXAlignment = Enum.TextXAlignment.Left
+RareHudContent.TextYAlignment = Enum.TextYAlignment.Top
+
+local HudDragging, HudDragStart, HudStartPosition = false, nil, nil
+RareHud.InputBegan:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        HudDragging = true
+        HudDragStart = Input.Position
+        HudStartPosition = RareHud.Position
+        Input.Changed:Connect(function()
+            if Input.UserInputState == Enum.UserInputState.End then 
+                HudDragging = false 
+                Settings.HudPosX = RareHud.Position.X.Scale
+                Settings.HudPosY = RareHud.Position.Y.Scale
+                SaveSettings()
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(Input)
+    if HudDragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+        local Delta = Input.Position - HudDragStart
+        RareHud.Position = UDim2.new(HudStartPosition.X.Scale, HudStartPosition.X.Offset + Delta.X, HudStartPosition.Y.Scale, HudStartPosition.Y.Offset + Delta.Y)
+    end
+end)
+
+---------------------------------------------------------
+-- Main Frame Setup
+---------------------------------------------------------
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.fromOffset(520, 380)
+mainFrame.Position = UDim2.new(0.5, -260, 0.4, -190)
+mainFrame.BackgroundColor3 = DarkTheme.Background
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = mainGui
+
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
+
+local mainStroke = Instance.new("UIStroke", mainFrame)
+mainStroke.Color = DarkTheme.Accent
+mainStroke.Thickness = 1.8
+
+-- Header
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 50)
+header.BackgroundColor3 = DarkTheme.Panel
+header.BorderSizePixel = 0
+header.Parent = mainFrame
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
+
+local logoImg = Instance.new("ImageLabel")
+logoImg.Size = UDim2.fromOffset(36, 36)
+logoImg.Position = UDim2.fromOffset(10, 7)
+logoImg.BackgroundTransparency = 1
+logoImg.Image = CONFIG.LogoID
+logoImg.Parent = header
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Position = UDim2.fromOffset(54, 8)
+titleLbl.Size = UDim2.new(0, 180, 0, 18)
+titleLbl.BackgroundTransparency = 1
+titleLbl.Text = "void HUB"
+titleLbl.TextColor3 = Colors.White
+titleLbl.Font = Enum.Font.GothamBold
+titleLbl.TextSize = 14
+titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.Parent = header
+
+local subTitleLbl = Instance.new("TextLabel")
+subTitleLbl.Position = UDim2.fromOffset(54, 26)
+subTitleLbl.Size = UDim2.new(0, 180, 0, 14)
+subTitleLbl.BackgroundTransparency = 1
+subTitleLbl.Text = "Official Community Interface"
+subTitleLbl.TextColor3 = DarkTheme.Glow
+subTitleLbl.Font = Enum.Font.GothamMedium
+subTitleLbl.TextSize = 10
+subTitleLbl.TextXAlignment = Enum.TextXAlignment.Left
+subTitleLbl.Parent = header
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(26, 26)
+closeBtn.Position = UDim2.new(1, -32, 0, 12)
+closeBtn.BackgroundColor3 = Color3.fromRGB(220, 38, 38)
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Colors.White
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 11
+closeBtn.Parent = header
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+---------------------------------------------------------
+-- Stats Header Display (FPS & Ping)
+---------------------------------------------------------
+local StatsFrame = Instance.new("Frame", header)
+StatsFrame.Size = UDim2.new(0, 130, 0, 26)
+StatsFrame.Position = UDim2.new(1, -170, 0.5, -13)
+StatsFrame.BackgroundTransparency = 1
+
+local FpsLabel = Instance.new("TextLabel", StatsFrame)
+FpsLabel.Size = UDim2.new(0.5, 0, 1, 0)
+FpsLabel.BackgroundColor3 = DarkTheme.ButtonOff
+FpsLabel.Text = "FPS: 60"
+FpsLabel.TextColor3 = Colors.Muted
+FpsLabel.TextSize = 9
+FpsLabel.Font = Enum.Font.GothamBold
+Instance.new("UICorner", FpsLabel).CornerRadius = UDim.new(0, 6)
+
+local PingLabel = Instance.new("TextLabel", StatsFrame)
+PingLabel.Size = UDim2.new(0.5, -4, 1, 0)
+PingLabel.Position = UDim2.new(0.5, 4, 0, 0)
+PingLabel.BackgroundColor3 = DarkTheme.ButtonOff
+PingLabel.Text = "Ping: 45ms"
+PingLabel.TextColor3 = Colors.Muted
+PingLabel.TextSize = 9
+PingLabel.Font = Enum.Font.GothamBold
+Instance.new("UICorner", PingLabel).CornerRadius = UDim.new(0, 6)
+
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            local fps = math.floor(1 / RunService.RenderStepped:Wait())
+            local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+            FpsLabel.Text = "FPS: " .. fps
+            PingLabel.Text = "Ping: " .. ping .. "ms"
+        end)
+    end
+end)
+
+---------------------------------------------------------
+-- Floating Toggle Button (Touch & Mouse Support)
+---------------------------------------------------------
+local openBtn = Instance.new("ImageButton")
+openBtn.Name = "void_OpenBtn"
+openBtn.Size = UDim2.fromOffset(45, 45)
+openBtn.Position = UDim2.new(0.02, 0, 0.2, 0)
+openBtn.BackgroundColor3 = DarkTheme.Panel
+openBtn.Image = CONFIG.LogoID
+openBtn.Visible = false
+openBtn.Active = true
+openBtn.Draggable = true
+openBtn.Parent = mainGui
+Instance.new("UICorner", openBtn).CornerRadius = UDim.new(1, 0)
+
+local openStroke = Instance.new("UIStroke", openBtn)
+openStroke.Color = DarkTheme.Accent
+openStroke.Thickness = 1.5
+
+local function toggleUI()
+    mainFrame.Visible = not mainFrame.Visible
+    openBtn.Visible = not mainFrame.Visible
+end
+
+closeBtn.MouseButton1Click:Connect(toggleUI)
+openBtn.MouseButton1Click:Connect(toggleUI)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == CONFIG.ToggleKey then
+        toggleUI()
+    end
+end)
+
+---------------------------------------------------------
+-- Navigation Bar & Tab System
+---------------------------------------------------------
+local NavBar = Instance.new("Frame", mainFrame)
+NavBar.Size = UDim2.new(0, 130, 1, -60)
+NavBar.Position = UDim2.new(0, 10, 0, 55)
+NavBar.BackgroundColor3 = DarkTheme.Panel
+NavBar.BorderSizePixel = 0
+Instance.new("UICorner", NavBar).CornerRadius = UDim.new(0, 10)
+
+local PagesFolder = Instance.new("Frame", mainFrame)
+PagesFolder.Size = UDim2.new(1, -155, 1, -60)
+PagesFolder.Position = UDim2.new(0, 145, 0, 55)
+PagesFolder.BackgroundTransparency = 1
+
+local Pages = {}
+local function CreatePage(PageName)
+    local Page = Instance.new("ScrollingFrame", PagesFolder)
+    Page.Name = PageName
+    Page.Size = UDim2.new(1, 0, 1, 0)
+    Page.BackgroundTransparency = 1
+    Page.CanvasSize = UDim2.new(0, 0, 0, 520)
+    Page.ScrollBarThickness = 3
+    Page.Visible = false
+    Pages[PageName] = Page
+    return Page
+end
+
+local InfoPage = CreatePage("Info")
+local EspPage = CreatePage("ESP")
+local AimPage = CreatePage("Aimbot")
+local TeleportPage = CreatePage("Teleport")
+local UtilsPage = CreatePage("Utils")
+
+local NavButtons = {}
+local function CreateNavButton(Name, Text, Y, TargetPage)
+    local Btn = Instance.new("TextButton", NavBar)
+    Btn.Size = UDim2.new(1, -12, 0, 36)
+    Btn.Position = UDim2.new(0, 6, 0, Y)
+    Btn.BackgroundColor3 = DarkTheme.ButtonOff
+    Btn.Text = Text
+    Btn.TextColor3 = Colors.Muted
+    Btn.Font = Enum.Font.GothamBold
+    Btn.TextSize = 11
+    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 8)
+
+    Btn.MouseButton1Click:Connect(function()
+        for pageName, pageFrame in pairs(Pages) do pageFrame.Visible = (pageName == TargetPage) end
+        for btnName, buttonObj in pairs(NavButtons) do
+            local isSelected = (buttonObj == Btn)
+            TweenService:Create(buttonObj, TweenInfo.new(0.2), {
+                BackgroundColor3 = isSelected and DarkTheme.Accent or DarkTheme.ButtonOff,
+                TextColor3 = isSelected and Colors.White or Colors.Muted
+            }):Play()
+        end
+    end)
+    NavButtons[Name] = Btn
+    return Btn
+end
+
+CreateNavButton("Info", "🏠 المعلومات", 8, "Info")
+CreateNavButton("ESP", "👁️ قائمة ESP", 48, "ESP")
+CreateNavButton("Aimbot", "🎯 الايمبوت", 88, "Aimbot")
+CreateNavButton("Teleport", "🚀 الانتقال", 128, "Teleport")
+CreateNavButton("Utils", "🛠️ أدوات اللاعب", 168, "Utils")
+
+InfoPage.Visible = true
+NavButtons["Info"].BackgroundColor3 = DarkTheme.Accent
+NavButtons["Info"].TextColor3 = Colors.White
+
+---------------------------------------------------------
+-- Tab 1: Info Page & Discord Copy Button
+---------------------------------------------------------
+local InfoCard = Instance.new("ScrollingFrame", InfoPage)
+InfoCard.Size = UDim2.new(1, 0, 1, 0)
+InfoCard.BackgroundColor3 = DarkTheme.Panel
+InfoCard.CanvasSize = UDim2.new(0, 0, 0, 410)
+InfoCard.ScrollBarThickness = 3
+InfoCard.BorderSizePixel = 0
+Instance.new("UICorner", InfoCard).CornerRadius = UDim.new(0, 10)
+
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(1, -20, 0, 42)
+copyBtn.Position = UDim2.fromOffset(10, 10)
+copyBtn.BackgroundColor3 = DarkTheme.Accent
+copyBtn.Text = "💬  نسخ رابط مجتمع Discord"
+copyBtn.TextColor3 = Colors.White
+copyBtn.Font = Enum.Font.GothamBold
+copyBtn.TextSize = 12
+copyBtn.Parent = InfoCard
+Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 8)
+
+local copyStroke = Instance.new("UIStroke", copyBtn)
+copyStroke.Color = DarkTheme.Glow
+copyStroke.Thickness = 1
+
+copyBtn.MouseButton1Click:Connect(function()
+    if setclipboard then
+        setclipboard(CONFIG.DiscordLink)
+        copyBtn.Text = "✓ تم النسخ بنجاح!"
+        task.delay(2, function()
+            copyBtn.Text = "💬  نسخ رابط مجتمع Discord"
+        end)
+    end
+end)
+
+local InfoTitle = Instance.new("TextLabel", InfoCard)
+InfoTitle.Size = UDim2.new(1, -20, 0, 30)
+InfoTitle.Position = UDim2.new(0, 10, 0, 60)
+InfoTitle.BackgroundTransparency = 1
+InfoTitle.Text = "💎 واجهة void الاحترافية"
+InfoTitle.TextColor3 = DarkTheme.Glow
+InfoTitle.TextSize = 13
+InfoTitle.Font = Enum.Font.GothamBold
+InfoTitle.TextXAlignment = Enum.TextXAlignment.Center
+
+local InfoText = Instance.new("TextLabel", InfoCard)
+InfoText.Size = UDim2.new(1, -20, 0, 310)
+InfoText.Position = UDim2.new(0, 10, 0, 95)
+InfoText.BackgroundTransparency = 1
+InfoText.Text = "🌟 **أهلاً بك في واجهة void الشاملة لجميع الأجهزة:**\n\n" ..
+    "• **طيران السيارات (Vehicle Fly):** طيران المواتر متوافق بالكامل مع الجوال والبي سي بلمس أو أزرار الكيبورد.\n\n" ..
+    "• **رادار الضبان النادرة (HUD):** واجهة مصغرة ومتحركة لمتابعة أقرب ضب أسطوري (T5) أو خرافي (T6).\n\n" ..
+    "• **نظام التنبيه الذكي والصوتي:** رصد فوري للضبان النادرة مع تنبيه مرئي وصوتي.\n\n" ..
+    "• **قائمة الكشف الشاملة (ESP):** كشف كامل بمسافة ممتدة تصل حتى 10000m للضبان، اللاعبين، المواتر والعزب.\n\n" ..
+    "• **نظام الايمبوت المتقدم:** تصويب محدد ودائرة FOV قابلة للتعديل.\n\n" ..
+    "• **منع الخمول وإعادة التوصيل:** حماية ضد الطرد بـ Anti-AFK و Auto-Rejoin."
+InfoText.TextColor3 = Colors.White
+InfoText.TextSize = 10
+InfoText.Font = Enum.Font.Gotham
+InfoText.TextWrapped = true
+InfoText.TextYAlignment = Enum.TextYAlignment.Top
+InfoText.TextXAlignment = Enum.TextXAlignment.Left
+
+---------------------------------------------------------
+-- UI Helper Functions (Toggle Buttons & Actions)
+---------------------------------------------------------
+local function CreateToggleButton(ParentFrame, Key, Text, Y, AccentColor, OnToggleCallback)
+    local Button = Instance.new("TextButton", ParentFrame)
+    Button.Size = UDim2.new(1, -6, 0, 36)
+    Button.Position = UDim2.new(0, 0, 0, Y)
+    Button.BackgroundColor3 = DarkTheme.ButtonOff
+    Button.Text = ""
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 8)
+
+    local Accent = Instance.new("Frame", Button)
+    Accent.Size = UDim2.new(0, 4, 1, -10)
+    Accent.Position = UDim2.new(0, 5, 0, 5)
+    Accent.BackgroundColor3 = AccentColor
+    Instance.new("UICorner", Accent).CornerRadius = UDim.new(1, 0)
+
+    local Label = Instance.new("TextLabel", Button)
+    Label.Size = UDim2.new(1, -55, 1, 0)
+    Label.Position = UDim2.new(0, 15, 0, 0)
+    Label.BackgroundTransparency = 1
+    Label.Text = Text
+    Label.TextColor3 = Colors.White
+    Label.TextSize = 11
+    Label.Font = Enum.Font.GothamMedium
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local State = Instance.new("TextLabel", Button)
+    State.Size = UDim2.new(0, 38, 0, 20)
+    State.Position = UDim2.new(1, -44, 0.5, -10)
+    State.BackgroundColor3 = Color3.fromRGB(50, 20, 28)
+    State.Text = Settings[Key] and "ON" or "OFF"
+    State.TextColor3 = Colors.White
+    State.TextSize = 10
+    State.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", State).CornerRadius = UDim.new(0, 6)
+
+    local function Refresh()
+        local Enabled = Settings[Key]
+        State.Text = Enabled and "ON" or "OFF"
+        TweenService:Create(State, TweenInfo.new(0.2), {BackgroundColor3 = Enabled and DarkTheme.ButtonOn or Color3.fromRGB(50, 20, 28)}):Play()
+        TweenService:Create(Button, TweenInfo.new(0.2), {BackgroundColor3 = Enabled and DarkTheme.ButtonOn or DarkTheme.ButtonOff}):Play()
+    end
+
+    Button.MouseButton1Click:Connect(function()
+        Settings[Key] = not Settings[Key]
+        Refresh()
+        SaveSettings()
+        if OnToggleCallback then OnToggleCallback(Settings[Key], Refresh) end
+    end)
+    
+    Refresh()
+    return Button
+end
+
+local function TeleportToModel(ModelKeywords, DisplayTitle, SettingKey)
+    local targetPos = nil
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local name = obj.Name:lower()
+            local match = true
+            for _, kw in ipairs(ModelKeywords) do
+                if not name:find(kw:lower()) then
+                    match = false
+                    break
+                end
+            end
+            if match and obj.PrimaryPart then
+                targetPos = obj.PrimaryPart.Position
+                break
+            elseif match then
+                local part = obj:FindFirstChildWhichIsA("BasePart")
+                if part then
+                    targetPos = part.Position
+                    break
+                end
+            end
+        end
+    end
+
+    if targetPos and LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+        LP.Character.HumanoidRootPart.CFrame = CFrame.new(targetPos + Vector3.new(0, 5, 0))
+    end
+end
+
+---------------------------------------------------------
+-- Tab 2: ESP Page Setup
+---------------------------------------------------------
+CreateToggleButton(EspPage, "DhabAll", "👁️ تفعيل كشف الضبان (الكل)", 6, Colors.VehicleColor)
+CreateToggleButton(EspPage, "DhabRareOnly", "👑 الضبان النادرة فقط (T5 & T6)", 46, RarityColors.T6)
+CreateToggleButton(EspPage, "SmartAlerts", "🚨 التنبيه الصوتي والمرئي للأسطوري", 86, Color3.fromRGB(255, 50, 70))
+CreateToggleButton(EspPage, "RareHud", "📌 رادار الضبان المصغر (HUD)", 126, DarkTheme.Glow, function(val)
+    Settings.RareHudActive = val
+    RareHud.Visible = val
+    SaveSettings()
+end)
+CreateToggleButton(EspPage, "Players", "👤 كشف اللاعبين", 166, Colors.PlayerColor)
+CreateToggleButton(EspPage, "Vehicles", "🚗 كشف المواتر والسيارات", 206, Colors.VehicleColor)
+CreateToggleButton(EspPage, "ShopEzba", "⛺ كشف المحلات والعزب", 246, DarkTheme.Glow)
+CreateToggleButton(EspPage, "Edge", "⚠️ خطوط الحواف (Off-screen ESP)", 286, Colors.White)
+
+local SliderEspTitle = Instance.new("TextLabel", EspPage)
+SliderEspTitle.Size = UDim2.new(1, -6, 0, 18)
+SliderEspTitle.Position = UDim2.new(0, 0, 0, 328)
+SliderEspTitle.BackgroundTransparency = 1
+SliderEspTitle.Text = "مسافة الكشف الأقصى: 500 متر"
+SliderEspTitle.TextColor3 = Colors.White
+SliderEspTitle.TextSize = 10
+SliderEspTitle.Font = Enum.Font.GothamMedium
+SliderEspTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local EspSliderBg = Instance.new("Frame", EspPage)
+EspSliderBg.Size = UDim2.new(1, -6, 0, 20)
+EspSliderBg.Position = UDim2.new(0, 0, 0, 348)
+EspSliderBg.BackgroundColor3 = DarkTheme.ButtonOff
+Instance.new("UICorner", EspSliderBg).CornerRadius = UDim.new(0, 6)
+
+local EspSliderFill = Instance.new("Frame", EspSliderBg)
+EspSliderFill.Size = UDim2.new(Settings.EspDistance / 10000, 0, 1, 0)
+EspSliderFill.BackgroundColor3 = DarkTheme.Accent
+Instance.new("UICorner", EspSliderFill).CornerRadius = UDim.new(0, 6)
+
+local function UpdateEspSlider(Input)
+    local pos = math.clamp((Input.Position.X - EspSliderBg.AbsolutePosition.X) / EspSliderBg.AbsoluteSize.X, 0, 1)
+    Settings.EspDistance = math.floor(pos * 10000)
+    EspSliderFill.Size = UDim2.new(pos, 0, 1, 0)
+    SliderEspTitle.Text = "مسافة الكشف الأقصى: " .. Settings.EspDistance .. " متر"
+    SaveSettings()
+end
+
+local EspSlidDragging = false
+EspSliderBg.InputBegan:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        EspSlidDragging = true
+        UpdateEspSlider(Input)
+    end
+end)
+UserInputService.InputEnded:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        EspSlidDragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(Input)
+    if EspSlidDragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+        UpdateEspSlider(Input)
+    end
+end)
+
+---------------------------------------------------------
+-- Tab 3: Aimbot Page Setup
+---------------------------------------------------------
+CreateToggleButton(AimPage, "Aimbot", "🎯 تفعيل الايمبوت المتقدم", 6, Color3.fromRGB(255, 80, 80))
+CreateToggleButton(AimPage, "RequireWeapon", "🔫 شرط مسك السلاح للتصويب", 46, DarkTheme.Glow)
+CreateToggleButton(AimPage, "UseFOVCircle", "⭕ إظهار دائرة النطاق (FOV)", 86, Colors.White, function(val)
+    FOVCircle.Visible = val
+end)
+CreateToggleButton(AimPage, "HoldRightClick", "🖱️ التصويب بالضغط المستمر (RMB)", 126, Colors.White)
+
+local AimDistTitle = Instance.new("TextLabel", AimPage)
+AimDistTitle.Size = UDim2.new(1, -6, 0, 18)
+AimDistTitle.Position = UDim2.new(0, 0, 0, 168)
+AimDistTitle.BackgroundTransparency = 1
+AimDistTitle.Text = "أقصى مسافة للايمبوت: 50 متر"
+AimDistTitle.TextColor3 = Colors.White
+AimDistTitle.TextSize = 10
+AimDistTitle.Font = Enum.Font.GothamMedium
+AimDistTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local AimSliderBg = Instance.new("Frame", AimPage)
+AimSliderBg.Size = UDim2.new(1, -6, 0, 20)
+AimSliderBg.Position = UDim2.new(0, 0, 0, 188)
+AimSliderBg.BackgroundColor3 = DarkTheme.ButtonOff
+Instance.new("UICorner", AimSliderBg).CornerRadius = UDim.new(0, 6)
+
+local AimSliderFill = Instance.new("Frame", AimSliderBg)
+AimSliderFill.Size = UDim2.new(Settings.AimbotDistance / 1000, 0, 1, 0)
+AimSliderFill.BackgroundColor3 = DarkTheme.Accent
+Instance.new("UICorner", AimSliderFill).CornerRadius = UDim.new(0, 6)
+
+local function UpdateAimSlider(Input)
+    local pos = math.clamp((Input.Position.X - AimSliderBg.AbsolutePosition.X) / AimSliderBg.AbsoluteSize.X, 0, 1)
+    Settings.AimbotDistance = math.floor(pos * 1000)
+    AimSliderFill.Size = UDim2.new(pos, 0, 1, 0)
+    AimDistTitle.Text = "أقصى مسافة للايمبوت: " .. Settings.AimbotDistance .. " متر"
+    SaveSettings()
+end
+
+local AimSlidDragging = false
+AimSliderBg.InputBegan:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        AimSlidDragging = true
+        UpdateAimSlider(Input)
+    end
+end)
+UserInputService.InputEnded:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        AimSlidDragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(Input)
+    if AimSlidDragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+        UpdateAimSlider(Input)
+    end
+end)
+
+local FovTitle = Instance.new("TextLabel", AimPage)
+FovTitle.Size = UDim2.new(1, -6, 0, 18)
+FovTitle.Position = UDim2.new(0, 0, 0, 218)
+FovTitle.BackgroundTransparency = 1
+FovTitle.Text = "حجم دائرة النطاق (FOV Radius): 120"
+FovTitle.TextColor3 = Colors.White
+FovTitle.TextSize = 10
+FovTitle.Font = Enum.Font.GothamMedium
+FovTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local FovSliderBg = Instance.new("Frame", AimPage)
+FovSliderBg.Size = UDim2.new(1, -6, 0, 20)
+FovSliderBg.Position = UDim2.new(0, 0, 0, 238)
+FovSliderBg.BackgroundColor3 = DarkTheme.ButtonOff
+Instance.new("UICorner", FovSliderBg).CornerRadius = UDim.new(0, 6)
+
+local FovSliderFill = Instance.new("Frame", FovSliderBg)
+FovSliderFill.Size = UDim2.new(Settings.FOVRadius / 500, 0, 1, 0)
+FovSliderFill.BackgroundColor3 = DarkTheme.Accent
+Instance.new("UICorner", FovSliderFill).CornerRadius = UDim.new(0, 6)
+
+local function UpdateFovSlider(Input)
+    local pos = math.clamp((Input.Position.X - FovSliderBg.AbsolutePosition.X) / FovSliderBg.AbsoluteSize.X, 0, 1)
+    Settings.FOVRadius = math.floor(pos * 500)
+    FovSliderFill.Size = UDim2.new(pos, 0, 1, 0)
+    FovTitle.Text = "حجم دائرة النطاق (FOV Radius): " .. Settings.FOVRadius
+    FOVCircle.Radius = Settings.FOVRadius
+    SaveSettings()
+end
+
+local FovSlidDragging = false
+FovSliderBg.InputBegan:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        FovSlidDragging = true
+        UpdateFovSlider(Input)
+    end
+end)
+UserInputService.InputEnded:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        FovSlidDragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(Input)
+    if FovSlidDragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+        UpdateFovSlider(Input)
+    end
+end)
+
+---------------------------------------------------------
+-- Tab 4: Teleport Page Setup
+---------------------------------------------------------
+local function CreateTeleportButton(Text, Y, Keywords)
+    local Btn = Instance.new("TextButton", TeleportPage)
+    Btn.Size = UDim2.new(1, -6, 0, 36)
+    Btn.Position = UDim2.new(0, 0, 0, Y)
+    Btn.BackgroundColor3 = DarkTheme.ButtonOff
+    Btn.Text = Text
+    Btn.TextColor3 = Colors.White
+    Btn.Font = Enum.Font.GothamMedium
+    Btn.TextSize = 11
+    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 8)
+
+    local Accent = Instance.new("Frame", Btn)
+    Accent.Size = UDim2.new(0, 4, 1, -10)
+    Accent.Position = UDim2.new(0, 5, 0, 5)
+    Accent.BackgroundColor3 = DarkTheme.Accent
+    Instance.new("UICorner", Accent).CornerRadius = UDim.new(1, 0)
+
+    Btn.MouseButton1Click:Connect(function()
+        TeleportToModel(Keywords, Text)
+    end)
+    return Btn
+end
+
+CreateTeleportButton("🏪 الانتقال إلى أقرب محل", 6, {"shop", "store", "محل", "متجر"})
+CreateTeleportButton("⛺ الانتقال إلى أقرب عزبة", 46, {"ezba", "camp", "عزبة", "مخيم"})
+CreateTeleportButton("🚗 الانتقال إلى أقرب موتر/سيارة", 86, {"car", "vehicle", "سيارة", "موتر", "جيب"})
+CreateTeleportButton("🦎 الانتقال إلى أقرب ضب عشوائي", 126, {"dhab", "lizard", "ضب"})
+
+---------------------------------------------------------
+-- Tab 5: Utils & Player Tools Page Setup
+---------------------------------------------------------
+CreateToggleButton(UtilsPage, "AntiAfkActive", "🛡️ منع الخمول (Anti-AFK)", 6, DarkTheme.Glow)
+CreateToggleButton(UtilsPage, "AutoRejoinActive", "🔄 إعادة الاتصال التلقائي (Auto-Rejoin)", 46, DarkTheme.Accent)
+CreateToggleButton(UtilsPage, "VehicleFlyActive", "✈️ تفعيل طيران السيارات (Vehicle Fly)", 86, Color3.fromRGB(255, 150, 0), function(val)
+    Settings.VehicleFlyActive = val
+    SaveSettings()
+end)
+
+local FlySpeedTitle = Instance.new("TextLabel", UtilsPage)
+FlySpeedTitle.Size = UDim2.new(1, -6, 0, 18)
+FlySpeedTitle.Position = UDim2.new(0, 0, 0, 128)
+FlySpeedTitle.BackgroundTransparency = 1
+FlySpeedTitle.Text = "سرعة طيران السيارات: 70"
+FlySpeedTitle.TextColor3 = Colors.White
+FlySpeedTitle.TextSize = 10
+FlySpeedTitle.Font = Enum.Font.GothamMedium
+FlySpeedTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local FlySliderBg = Instance.new("Frame", UtilsPage)
+FlySliderBg.Size = UDim2.new(1, -6, 0, 20)
+FlySliderBg.Position = UDim2.new(0, 0, 0, 148)
+FlySliderBg.BackgroundColor3 = DarkTheme.ButtonOff
+Instance.new("UICorner", FlySliderBg).CornerRadius = UDim.new(0, 6)
+
+local FlySliderFill = Instance.new("Frame", FlySliderBg)
+FlySliderFill.Size = UDim2.new(Settings.VehicleFlySpeed / 300, 0, 1, 0)
+FlySliderFill.BackgroundColor3 = DarkTheme.Accent
+Instance.new("UICorner", FlySliderFill).CornerRadius = UDim.new(0, 6)
+
+local function UpdateFlySlider(Input)
+    local pos = math.clamp((Input.Position.X - FlySliderBg.AbsolutePosition.X) / FlySliderBg.AbsoluteSize.X, 0, 1)
+    Settings.VehicleFlySpeed = math.floor(pos * 300)
+    FlySliderFill.Size = UDim2.new(pos, 0, 1, 0)
+    FlySpeedTitle.Text = "سرعة طيران السيارات: " .. Settings.VehicleFlySpeed
+    SaveSettings()
+end
+
+local FlySlidDragging = false
+FlySliderBg.InputBegan:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        FlySlidDragging = true
+        UpdateFlySlider(Input)
+    end
+end)
+UserInputService.InputEnded:Connect(function(Input)
+    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+        FlySlidDragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(Input)
+    if FlySlidDragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+        UpdateFlySlider(Input)
+    end
+end)
+
+---------------------------------------------------------
+-- ESP Core Engine (Dhabs, Players, Vehicles, Shops)
+---------------------------------------------------------
+RunService.RenderStepped:Connect(function()
+    FOVCircle.Position = UserInputService:GetMouseLocation()
+    FOVCircle.Visible = Settings.UseFOVCircle and Settings.Aimbot
+
+    local cam = Workspace.CurrentCamera
+    local myChar = LP.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+    -- Anti-AFK Hook
+    if Settings.AntiAfkActive then
+        local vu = game:GetService("VirtualUser")
+        pcall(function()
+            vu:Button2Down(Vector2.new(0,0), cam.CFrame)
+            task.wait(1)
+            vu:Button2Up(Vector2.new(0,0), cam.CFrame)
+        end)
+    end
+end)
+
+---------------------------------------------------------
+-- Vehicle Fly Engine
+---------------------------------------------------------
+local controlModule = {Forward = 0, Backward = 0, Left = 0, Right = 0, Up = 0, Down = 0}
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.W then controlModule.Forward = 1
+    elseif input.KeyCode == Enum.KeyCode.S then controlModule.Backward = 1
+    elseif input.KeyCode == Enum.KeyCode.A then controlModule.Left = 1
+    elseif input.KeyCode == Enum.KeyCode.D then controlModule.Right = 1
+    elseif input.KeyCode == Enum.KeyCode.Space then controlModule.Up = 1
+    elseif input.KeyCode == Enum.KeyCode.LeftShift then controlModule.Down = 1
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.W then controlModule.Forward = 0
+    elseif input.KeyCode == Enum.KeyCode.S then controlModule.Backward = 0
+    elseif input.KeyCode == Enum.KeyCode.A then controlModule.Left = 0
+    elseif input.KeyCode == Enum.KeyCode.D then controlModule.Right = 0
+    elseif input.KeyCode == Enum.KeyCode.Space then controlModule.Up = 0
+    elseif input.KeyCode == Enum.KeyCode.LeftShift then controlModule.Down = 0
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if not Settings.VehicleFlyActive then return end
+    local char = LP.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid or not humanoid.SeatPart then return end
+    
+    local vehicleModel = humanoid.SeatPart.Parent
+    local primaryPart = vehicleModel:IsA("Model") and (vehicleModel.PrimaryPart or vehicleModel:FindFirstChildWhichIsA("BasePart")) or humanoid.SeatPart
+    
+    if primaryPart then
+        primaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        primaryPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        
+        local camCFrame = Camera.CFrame
+        local moveDir = Vector3.new(
+            controlModule.Right - controlModule.Left,
+            controlModule.Up - controlModule.Down,
+            controlModule.Forward - controlModule.Backward
+        )
+        
+        local targetVel = (camCFrame.RightVector * moveDir.X + Vector3.new(0, moveDir.Y, 0) + camCFrame.LookVector * moveDir.Z) * Settings.VehicleFlySpeed
+        primaryPart.CFrame = primaryPart.CFrame + targetVel * RunService.RenderStepped:Wait()
+    end
+end)
